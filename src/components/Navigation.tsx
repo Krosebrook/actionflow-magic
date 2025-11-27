@@ -25,7 +25,7 @@ export const Navigation = () => {
             <Link to="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               About
             </Link>
-            <Button variant="hero" size="sm">
+            <Button variant="hero" size="sm" onClick={() => window.location.href = '/auth'}>
               Start free trial
             </Button>
           </div>
@@ -64,7 +64,7 @@ export const Navigation = () => {
             >
               About
             </Link>
-            <Button variant="hero" size="sm" className="w-full">
+            <Button variant="hero" size="sm" className="w-full" onClick={() => window.location.href = '/auth'}>
               Start free trial
             </Button>
           </div>
