@@ -24,6 +24,7 @@ const Index = () => {
             variant="hero" 
             size="lg"
             className="text-lg px-10 mb-20"
+            onClick={() => window.location.href = '/auth'}
           >
             Start free trial
           </Button>
@@ -278,7 +279,7 @@ const Index = () => {
           <p className="text-xl text-muted-foreground mb-10 leading-relaxed">
             Join 500+ teams saving hours every week.
           </p>
-          <Button variant="hero" size="lg" className="text-lg px-10">
+          <Button variant="hero" size="lg" className="text-lg px-10" onClick={() => window.location.href = '/auth'}>
             Start free trial
             <ArrowRight className="ml-2 w-5 h-5" />
           </Button>

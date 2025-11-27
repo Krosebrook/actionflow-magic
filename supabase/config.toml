@@ -1,1 +1,7 @@
 project_id = "rscdwixacodxasrdgcep"
+
+[functions.transcribe-audio]
+verify_jwt = true
+
+[functions.extract-action-items]
+verify_jwt = true
