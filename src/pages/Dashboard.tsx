@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "@supabase/supabase-js";
@@ -7,12 +7,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, LogOut, Settings, Users, Calendar, CheckSquare } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { useWorkspace } from "@/hooks/useWorkspace";
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const { workspaceId } = useWorkspace();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -60,9 +62,9 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">ActionFlow</h1>
             <div className="flex items-center gap-4">
-              <Button variant="outline" size="sm" onClick={() => toast({ title: "Coming soon!" })}>
+              <Button variant="outline" size="sm" onClick={() => navigate("/integrations")}>
                 <Settings className="w-4 h-4 mr-2" />
-                Settings
+                Integrations
               </Button>
               <Button variant="outline" size="sm" onClick={handleSignOut}>
                 <LogOut className="w-4 h-4 mr-2" />
