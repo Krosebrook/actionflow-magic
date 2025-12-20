@@ -1,10 +1,21 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Input validation schema
+const ExtractActionItemsSchema = z.object({
+  transcript: z.string()
+    .min(1, 'Transcript cannot be empty')
+    .max(500000, 'Transcript exceeds maximum length of 500,000 characters'),
+  meetingId: z.string()
+    .uuid('Invalid meeting ID format')
+    .optional(),
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,19 +23,36 @@ serve(async (req) => {
   }
 
   try {
-    const { transcript, meetingId } = await req.json();
-    console.log('Extracting action items for meeting:', meetingId);
-
-    if (!transcript) {
-      throw new Error('No transcript provided');
+    // Parse and validate input
+    const rawBody = await req.json();
+    const validationResult = ExtractActionItemsSchema.safeParse(rawBody);
+    
+    if (!validationResult.success) {
+      console.error('Validation error:', validationResult.error.errors);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid request data',
+          details: validationResult.error.errors.map(e => ({
+            field: e.path.join('.'),
+            message: e.message
+          }))
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
     }
+
+    const { transcript, meetingId } = validationResult.data;
+    console.log('Extracting action items for meeting:', meetingId || 'no meeting ID');
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
-    const body: any = {
+    const body: Record<string, unknown> = {
       model: 'google/gemini-2.5-flash',
       messages: [
         {

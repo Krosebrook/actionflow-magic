@@ -1,11 +1,135 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Schema for Microsoft Graph webhook event
+const TeamsEventSchema = z.object({
+  resourceData: z.object({
+    '@odata.type': z.string(),
+    id: z.string().optional(),
+    subject: z.string().optional(),
+    bodyPreview: z.string().optional(),
+    start: z.object({
+      dateTime: z.string(),
+      timeZone: z.string().optional(),
+    }).optional(),
+    end: z.object({
+      dateTime: z.string(),
+      timeZone: z.string().optional(),
+    }).optional(),
+    organizer: z.object({
+      emailAddress: z.object({
+        name: z.string().optional(),
+        address: z.string().optional(),
+      }).optional(),
+    }).optional(),
+    onlineMeeting: z.object({
+      joinUrl: z.string().optional(),
+    }).optional(),
+  }).passthrough(),
+  changeType: z.enum(['created', 'updated', 'deleted']),
+  clientState: z.string().optional(),
+  subscriptionId: z.string().optional(),
+  tenantId: z.string().optional(),
+});
+
+const WebhookPayloadSchema = z.object({
+  value: z.array(TeamsEventSchema),
+});
+
+type TeamsResourceData = z.infer<typeof TeamsEventSchema>['resourceData'];
+
+// Verify Microsoft Graph webhook signature using clientState
+async function verifyWebhookSignature(
+  clientState: string | null | undefined
+): Promise<boolean> {
+  const TEAMS_WEBHOOK_SECRET = Deno.env.get('TEAMS_WEBHOOK_SECRET');
+  
+  // If no secret is configured, log warning but allow in development
+  if (!TEAMS_WEBHOOK_SECRET) {
+    console.warn('TEAMS_WEBHOOK_SECRET not configured - signature verification skipped');
+    return true;
+  }
+
+  // Microsoft Graph sends clientState that should match what we configured
+  if (!clientState || clientState !== TEAMS_WEBHOOK_SECRET) {
+    console.error('Client state mismatch or missing');
+    return false;
+  }
+
+  return true;
+}
+
+// Map tenant/organizer to workspace
+async function mapToWorkspace(
+  supabase: SupabaseClient,
+  tenantId: string | undefined,
+  organizerEmail: string | undefined
+): Promise<{ workspaceId: string; userId: string } | null> {
+  // Try to find integration config that matches the tenant
+  if (tenantId) {
+    const { data: integration } = await supabase
+      .from('integrations')
+      .select('workspace_id, config')
+      .eq('integration_type', 'teams')
+      .eq('is_active', true)
+      .single();
+    
+    if (integration) {
+      const config = integration.config as { tenantId?: string };
+      if (config.tenantId === tenantId) {
+        // Get a user from this workspace
+        const { data: member } = await supabase
+          .from('workspace_members')
+          .select('user_id')
+          .eq('workspace_id', integration.workspace_id)
+          .limit(1)
+          .single();
+        
+        if (member) {
+          return { 
+            workspaceId: integration.workspace_id, 
+            userId: member.user_id 
+          };
+        }
+      }
+    }
+  }
+
+  // Fallback: try to match by organizer email
+  if (organizerEmail) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', organizerEmail.toLowerCase())
+      .single();
+    
+    if (profile) {
+      const { data: membership } = await supabase
+        .from('workspace_members')
+        .select('workspace_id')
+        .eq('user_id', profile.id)
+        .limit(1)
+        .single();
+      
+      if (membership) {
+        return { 
+          workspaceId: membership.workspace_id, 
+          userId: profile.id 
+        };
+      }
+    }
+  }
+
+  console.log('Could not map webhook to workspace - no matching tenant or organizer');
+  return null;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -22,33 +146,95 @@ serve(async (req) => {
     const validationToken = url.searchParams.get('validationToken');
     
     if (validationToken) {
+      // Validate the token format (should be a simple string)
+      if (!/^[a-zA-Z0-9_-]+$/.test(validationToken)) {
+        console.error('Invalid validation token format');
+        return new Response('Invalid token format', {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'text/plain' },
+        });
+      }
+      
       console.log('Handling Teams validation challenge');
       return new Response(validationToken, {
         headers: { ...corsHeaders, 'Content-Type': 'text/plain' },
       });
     }
 
-    // Parse webhook payload
-    const payload = await req.json();
-    console.log('Received Teams webhook:', JSON.stringify(payload, null, 2));
-
-    // Extract event type and data
-    const { value } = payload;
+    // Get raw body for parsing
+    const rawBody = await req.text();
     
-    if (!value || value.length === 0) {
+    let payload: z.infer<typeof WebhookPayloadSchema>;
+    
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      console.error('Invalid JSON payload');
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Validate payload structure
+    const validationResult = WebhookPayloadSchema.safeParse(payload);
+    if (!validationResult.success) {
+      console.error('Payload validation error:', validationResult.error.errors);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid payload structure',
+          details: validationResult.error.errors.map(e => ({
+            path: e.path.join('.'),
+            message: e.message
+          }))
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const validatedPayload = validationResult.data;
+    console.log('Received Teams webhook with', validatedPayload.value.length, 'events');
+
+    if (validatedPayload.value.length === 0) {
       return new Response(JSON.stringify({ message: 'No events in payload' }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    // Verify signature using clientState from first event
+    const clientState = validatedPayload.value[0].clientState;
+    const isValid = await verifyWebhookSignature(clientState);
+    
+    if (!isValid) {
+      console.error('Webhook signature verification failed');
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Process each event
-    for (const event of value) {
-      const { resourceData, changeType } = event;
+    for (const event of validatedPayload.value) {
+      const { resourceData, changeType, tenantId } = event;
+      const organizerEmail = resourceData.organizer?.emailAddress?.address;
+      
+      // Map to workspace
+      const mapping = await mapToWorkspace(supabase, tenantId, organizerEmail);
+      
+      if (!mapping) {
+        console.log('Skipping event - no workspace mapping found');
+        continue;
+      }
+
+      const { workspaceId, userId } = mapping;
       
       // Handle different event types
       if (changeType === 'created' && resourceData['@odata.type'] === '#microsoft.graph.event') {
-        await handleMeetingCreated(supabase, resourceData);
+        await handleMeetingCreated(supabase, resourceData, workspaceId, userId);
       } else if (changeType === 'updated' && resourceData['@odata.type'] === '#microsoft.graph.event') {
         await handleMeetingUpdated(supabase, resourceData);
       } else if (changeType === 'deleted' && resourceData['@odata.type'] === '#microsoft.graph.event') {
@@ -75,47 +261,23 @@ serve(async (req) => {
   }
 });
 
-async function handleMeetingCreated(supabase: any, meetingData: any) {
+async function handleMeetingCreated(
+  supabase: SupabaseClient, 
+  meetingData: TeamsResourceData,
+  workspaceId: string,
+  userId: string
+) {
   console.log('Handling meeting created:', meetingData.subject);
 
-  // Extract meeting details
-  const {
-    id: teamsId,
-    subject: title,
-    bodyPreview: description,
-    start,
-    end,
-    organizer,
-    onlineMeeting,
-  } = meetingData;
+  const teamsId = meetingData.id;
+  const title = meetingData.subject;
+  const description = meetingData.bodyPreview;
+  const start = meetingData.start;
 
-  // Find or create workspace for the organizer
-  // For now, we'll use the first workspace we find
-  // In production, you'd match based on email domain or user mapping
-  const { data: workspaces } = await supabase
-    .from('workspaces')
-    .select('id')
-    .limit(1);
-
-  if (!workspaces || workspaces.length === 0) {
-    console.log('No workspace found to create meeting');
+  if (!teamsId) {
+    console.error('Meeting data missing ID');
     return;
   }
-
-  const workspaceId = workspaces[0].id;
-
-  // Get the creator user (service account or mapped user)
-  const { data: users } = await supabase
-    .from('profiles')
-    .select('id')
-    .limit(1);
-
-  if (!users || users.length === 0) {
-    console.log('No user found to create meeting');
-    return;
-  }
-
-  const userId = users[0].id;
 
   // Create meeting record
   const { data: meeting, error } = await supabase
@@ -140,10 +302,21 @@ async function handleMeetingCreated(supabase: any, meetingData: any) {
   console.log('Meeting created successfully:', meeting.id);
 }
 
-async function handleMeetingUpdated(supabase: any, meetingData: any) {
+async function handleMeetingUpdated(
+  supabase: SupabaseClient, 
+  meetingData: TeamsResourceData
+) {
   console.log('Handling meeting updated:', meetingData.subject);
 
-  const { id: teamsId, subject, bodyPreview, start, end } = meetingData;
+  const teamsId = meetingData.id;
+  const subject = meetingData.subject;
+  const bodyPreview = meetingData.bodyPreview;
+  const start = meetingData.start;
+
+  if (!teamsId) {
+    console.error('Meeting data missing ID');
+    return;
+  }
 
   // Find existing meeting
   const { data: existingMeeting } = await supabase
@@ -175,10 +348,18 @@ async function handleMeetingUpdated(supabase: any, meetingData: any) {
   console.log('Meeting updated successfully');
 }
 
-async function handleMeetingDeleted(supabase: any, meetingData: any) {
+async function handleMeetingDeleted(
+  supabase: SupabaseClient, 
+  meetingData: TeamsResourceData
+) {
   console.log('Handling meeting deleted:', meetingData.id);
 
-  const { id: teamsId } = meetingData;
+  const teamsId = meetingData.id;
+
+  if (!teamsId) {
+    console.error('Meeting data missing ID');
+    return;
+  }
 
   // Find and update meeting status
   const { error } = await supabase
