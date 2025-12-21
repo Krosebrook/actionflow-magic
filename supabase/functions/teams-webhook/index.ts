@@ -3,10 +3,32 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
-const corsHeaders = {
+// Security headers including CORS and CSP
+const securityHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-XSS-Protection': '1; mode=block',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
 };
+
+// Sanitize string input to prevent XSS
+function sanitizeString(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;');
+}
+
+// Remove potentially dangerous characters from text content
+function sanitizeTextContent(text: string): string {
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
 
 // Rate limiting for webhooks (stricter limits)
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
@@ -171,7 +193,7 @@ async function mapToWorkspace(
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: securityHeaders });
   }
 
   // Rate limiting check
@@ -185,7 +207,7 @@ serve(async (req) => {
       {
         status: 429,
         headers: { 
-          ...corsHeaders, 
+          ...securityHeaders, 
           'Content-Type': 'application/json',
           'Retry-After': String(rateLimitResult.retryAfter || 60),
         },
@@ -208,13 +230,13 @@ serve(async (req) => {
         console.error('Invalid validation token format');
         return new Response('Invalid token format', {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'text/plain' },
+          headers: { ...securityHeaders, 'Content-Type': 'text/plain' },
         });
       }
       
       console.log('Handling Teams validation challenge');
       return new Response(validationToken, {
-        headers: { ...corsHeaders, 'Content-Type': 'text/plain' },
+        headers: { ...securityHeaders, 'Content-Type': 'text/plain' },
       });
     }
 
@@ -229,7 +251,7 @@ serve(async (req) => {
       console.error('Invalid JSON payload');
       return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -247,7 +269,7 @@ serve(async (req) => {
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...securityHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
@@ -258,7 +280,7 @@ serve(async (req) => {
     if (validatedPayload.value.length === 0) {
       return new Response(JSON.stringify({ message: 'No events in payload' }), {
         status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -270,7 +292,7 @@ serve(async (req) => {
       console.error('Webhook signature verification failed');
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -303,16 +325,17 @@ serve(async (req) => {
       JSON.stringify({ message: 'Webhook processed successfully' }),
       {
         status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   } catch (error) {
     console.error('Error processing Teams webhook:', error);
+    const errorMessage = error instanceof Error ? sanitizeString(error.message) : 'Unknown error';
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: errorMessage }),
       {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   }
@@ -336,13 +359,13 @@ async function handleMeetingCreated(
     return;
   }
 
-  // Create meeting record
+  // Create meeting record with sanitized inputs
   const { data: meeting, error } = await supabase
     .from('meetings')
     .insert({
       workspace_id: workspaceId,
-      title: title || 'Teams Meeting',
-      description: description || '',
+      title: sanitizeTextContent(title || 'Teams Meeting'),
+      description: sanitizeTextContent(description || ''),
       scheduled_at: start?.dateTime ? new Date(start.dateTime).toISOString() : null,
       status: 'scheduled',
       teams_meeting_id: teamsId,
@@ -387,12 +410,12 @@ async function handleMeetingUpdated(
     return;
   }
 
-  // Update meeting
+  // Update meeting with sanitized inputs
   const { error } = await supabase
     .from('meetings')
     .update({
-      title: subject || 'Teams Meeting',
-      description: bodyPreview || '',
+      title: sanitizeTextContent(subject || 'Teams Meeting'),
+      description: sanitizeTextContent(bodyPreview || ''),
       scheduled_at: start?.dateTime ? new Date(start.dateTime).toISOString() : null,
     })
     .eq('id', existingMeeting.id);

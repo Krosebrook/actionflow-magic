@@ -2,10 +2,33 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
-const corsHeaders = {
+// Security headers including CORS and CSP
+const securityHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-XSS-Protection': '1; mode=block',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
 };
+
+// Sanitize string input to prevent XSS
+function sanitizeString(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;');
+}
+
+// Remove potentially dangerous characters from text content
+function sanitizeTextContent(text: string): string {
+  // Remove null bytes and other control characters (except newlines/tabs)
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
 
 // Rate limiting configuration
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
@@ -60,7 +83,7 @@ const TranscribeRequestSchema = z.object({
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: securityHeaders });
   }
 
   // Rate limiting check
@@ -74,7 +97,7 @@ serve(async (req) => {
       {
         status: 429,
         headers: { 
-          ...corsHeaders, 
+          ...securityHeaders, 
           'Content-Type': 'application/json',
           'Retry-After': String(rateLimitResult.retryAfter || 60),
         },
@@ -99,7 +122,7 @@ serve(async (req) => {
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...securityHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
@@ -142,23 +165,25 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    const transcript = data.choices[0].message.content;
+    // Sanitize the transcript output to prevent XSS when displayed
+    const transcript = sanitizeTextContent(data.choices[0].message.content);
 
     console.log('Transcription completed successfully');
 
     return new Response(
       JSON.stringify({ transcript }),
       {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   } catch (error) {
     console.error('Error in transcribe-audio function:', error);
+    const errorMessage = error instanceof Error ? sanitizeString(error.message) : 'Unknown error';
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: errorMessage }),
       {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   }

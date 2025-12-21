@@ -2,10 +2,44 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
-const corsHeaders = {
+// Security headers including CORS and CSP
+const securityHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-XSS-Protection': '1; mode=block',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
 };
+
+// Sanitize string input to prevent XSS
+function sanitizeString(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;');
+}
+
+// Remove potentially dangerous characters from text content
+function sanitizeTextContent(text: string): string {
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+
+// Sanitize action items array
+function sanitizeActionItems(items: { tasks: Array<{ title: string; description?: string; assignee?: string; priority: string; dueDate?: string }> }): typeof items {
+  return {
+    tasks: items.tasks.map(task => ({
+      ...task,
+      title: sanitizeTextContent(task.title),
+      description: task.description ? sanitizeTextContent(task.description) : undefined,
+      assignee: task.assignee ? sanitizeTextContent(task.assignee) : undefined,
+    }))
+  };
+}
 
 // Rate limiting configuration
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
@@ -58,7 +92,7 @@ const ExtractActionItemsSchema = z.object({
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: securityHeaders });
   }
 
   // Rate limiting check
@@ -72,7 +106,7 @@ serve(async (req) => {
       {
         status: 429,
         headers: { 
-          ...corsHeaders, 
+          ...securityHeaders, 
           'Content-Type': 'application/json',
           'Retry-After': String(rateLimitResult.retryAfter || 60),
         },
@@ -97,7 +131,7 @@ serve(async (req) => {
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...securityHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
@@ -179,21 +213,24 @@ serve(async (req) => {
     }
 
     const actionItems = JSON.parse(toolCall.function.arguments);
-    console.log('Extracted action items:', actionItems);
+    // Sanitize action items output to prevent XSS
+    const sanitizedItems = sanitizeActionItems(actionItems);
+    console.log('Extracted action items:', sanitizedItems);
 
     return new Response(
-      JSON.stringify(actionItems),
+      JSON.stringify(sanitizedItems),
       {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   } catch (error) {
     console.error('Error in extract-action-items function:', error);
+    const errorMessage = error instanceof Error ? sanitizeString(error.message) : 'Unknown error';
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: errorMessage }),
       {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
       }
     );
   }
