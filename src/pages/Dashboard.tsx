@@ -8,14 +8,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, LogOut, Settings, Users, Calendar, CheckSquare } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkspace } from "@/hooks/useWorkspace";
-
+import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const { workspaceId } = useWorkspace();
-
+  
+  // Enable session timeout - auto logout after 30 min of inactivity
+  useSessionTimeout({ enabled: true });
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);

@@ -2,6 +2,10 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createAuditLogger } from "../_shared/audit-logger.ts";
+import { checkRequestSize, getContentLength, formatBytes } from "../_shared/request-size-limiter.ts";
+
+const FUNCTION_NAME = 'teams-webhook';
 
 // Security headers including CORS and CSP
 const securityHeaders = {
@@ -192,16 +196,39 @@ async function mapToWorkspace(
 }
 
 serve(async (req) => {
+  const auditLogger = createAuditLogger(req);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: securityHeaders });
   }
 
-  // Rate limiting check
   const clientIP = getClientIP(req);
+
+  // Request size limit check
+  const contentLength = getContentLength(req);
+  const sizeResult = checkRequestSize(contentLength, FUNCTION_NAME);
+  
+  if (!sizeResult.allowed) {
+    console.warn(`Request size exceeded for IP: ${clientIP}, size: ${formatBytes(sizeResult.size)}, limit: ${formatBytes(sizeResult.limit)}`);
+    await auditLogger.logRequestSizeExceeded(FUNCTION_NAME, sizeResult.size, sizeResult.limit);
+    return new Response(
+      JSON.stringify({ 
+        error: 'Request too large',
+        details: `Maximum request size is ${formatBytes(sizeResult.limit)}`,
+      }),
+      {
+        status: 413,
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  // Rate limiting check
   const rateLimitResult = checkRateLimit(clientIP);
   
   if (!rateLimitResult.allowed) {
     console.warn(`Rate limit exceeded for IP: ${clientIP}`);
+    await auditLogger.logRateLimit(FUNCTION_NAME);
     return new Response(
       JSON.stringify({ error: 'Too many requests' }),
       {
@@ -228,6 +255,7 @@ serve(async (req) => {
       // Validate the token format (should be a simple string)
       if (!/^[a-zA-Z0-9_-]+$/.test(validationToken)) {
         console.error('Invalid validation token format');
+        await auditLogger.logValidationFailed(FUNCTION_NAME, [{ message: 'Invalid validation token format' }]);
         return new Response('Invalid token format', {
           status: 400,
           headers: { ...securityHeaders, 'Content-Type': 'text/plain' },
@@ -249,6 +277,7 @@ serve(async (req) => {
       payload = JSON.parse(rawBody);
     } catch {
       console.error('Invalid JSON payload');
+      await auditLogger.logValidationFailed(FUNCTION_NAME, [{ message: 'Invalid JSON payload' }]);
       return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
         status: 400,
         headers: { ...securityHeaders, 'Content-Type': 'application/json' },
@@ -259,6 +288,7 @@ serve(async (req) => {
     const validationResult = WebhookPayloadSchema.safeParse(payload);
     if (!validationResult.success) {
       console.error('Payload validation error:', validationResult.error.errors);
+      await auditLogger.logValidationFailed(FUNCTION_NAME, validationResult.error.errors);
       return new Response(
         JSON.stringify({ 
           error: 'Invalid payload structure',
@@ -277,6 +307,15 @@ serve(async (req) => {
     const validatedPayload = validationResult.data;
     console.log('Received Teams webhook with', validatedPayload.value.length, 'events');
 
+    // Log webhook received
+    await auditLogger.log({
+      event_type: 'webhook_received',
+      event_category: 'data',
+      resource_type: 'teams_webhook',
+      severity: 'info',
+      details: { event_count: validatedPayload.value.length },
+    });
+
     if (validatedPayload.value.length === 0) {
       return new Response(JSON.stringify({ message: 'No events in payload' }), {
         status: 200,
@@ -290,6 +329,13 @@ serve(async (req) => {
     
     if (!isValid) {
       console.error('Webhook signature verification failed');
+      await auditLogger.log({
+        event_type: 'permission_denied',
+        event_category: 'security',
+        resource_type: 'teams_webhook',
+        severity: 'error',
+        details: { reason: 'Invalid webhook signature' },
+      });
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...securityHeaders, 'Content-Type': 'application/json' },
@@ -313,11 +359,11 @@ serve(async (req) => {
       
       // Handle different event types
       if (changeType === 'created' && resourceData['@odata.type'] === '#microsoft.graph.event') {
-        await handleMeetingCreated(supabase, resourceData, workspaceId, userId);
+        await handleMeetingCreated(supabase, resourceData, workspaceId, userId, auditLogger);
       } else if (changeType === 'updated' && resourceData['@odata.type'] === '#microsoft.graph.event') {
-        await handleMeetingUpdated(supabase, resourceData);
+        await handleMeetingUpdated(supabase, resourceData, auditLogger);
       } else if (changeType === 'deleted' && resourceData['@odata.type'] === '#microsoft.graph.event') {
-        await handleMeetingDeleted(supabase, resourceData);
+        await handleMeetingDeleted(supabase, resourceData, auditLogger);
       }
     }
 
@@ -331,6 +377,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error processing Teams webhook:', error);
     const errorMessage = error instanceof Error ? sanitizeString(error.message) : 'Unknown error';
+    await auditLogger.logApiError(FUNCTION_NAME, errorMessage);
     return new Response(
       JSON.stringify({ error: errorMessage }),
       {
@@ -345,7 +392,8 @@ async function handleMeetingCreated(
   supabase: SupabaseClient, 
   meetingData: TeamsResourceData,
   workspaceId: string,
-  userId: string
+  userId: string,
+  auditLogger: ReturnType<typeof createAuditLogger>
 ) {
   console.log('Handling meeting created:', meetingData.subject);
 
@@ -379,12 +427,25 @@ async function handleMeetingCreated(
     return;
   }
 
+  // Log meeting creation
+  await auditLogger.log({
+    event_type: 'data_create',
+    event_category: 'data',
+    user_id: userId,
+    workspace_id: workspaceId,
+    resource_type: 'meeting',
+    resource_id: meeting.id,
+    severity: 'info',
+    details: { source: 'teams_webhook', teams_meeting_id: teamsId },
+  });
+
   console.log('Meeting created successfully:', meeting.id);
 }
 
 async function handleMeetingUpdated(
   supabase: SupabaseClient, 
-  meetingData: TeamsResourceData
+  meetingData: TeamsResourceData,
+  auditLogger: ReturnType<typeof createAuditLogger>
 ) {
   console.log('Handling meeting updated:', meetingData.subject);
 
@@ -401,7 +462,7 @@ async function handleMeetingUpdated(
   // Find existing meeting
   const { data: existingMeeting } = await supabase
     .from('meetings')
-    .select('id')
+    .select('id, workspace_id')
     .eq('teams_meeting_id', teamsId)
     .single();
 
@@ -425,12 +486,24 @@ async function handleMeetingUpdated(
     return;
   }
 
+  // Log meeting update
+  await auditLogger.log({
+    event_type: 'data_update',
+    event_category: 'data',
+    workspace_id: existingMeeting.workspace_id,
+    resource_type: 'meeting',
+    resource_id: existingMeeting.id,
+    severity: 'info',
+    details: { source: 'teams_webhook', teams_meeting_id: teamsId },
+  });
+
   console.log('Meeting updated successfully');
 }
 
 async function handleMeetingDeleted(
   supabase: SupabaseClient, 
-  meetingData: TeamsResourceData
+  meetingData: TeamsResourceData,
+  auditLogger: ReturnType<typeof createAuditLogger>
 ) {
   console.log('Handling meeting deleted:', meetingData.id);
 
@@ -441,6 +514,13 @@ async function handleMeetingDeleted(
     return;
   }
 
+  // Find existing meeting
+  const { data: existingMeeting } = await supabase
+    .from('meetings')
+    .select('id, workspace_id')
+    .eq('teams_meeting_id', teamsId)
+    .single();
+
   // Find and update meeting status
   const { error } = await supabase
     .from('meetings')
@@ -450,6 +530,19 @@ async function handleMeetingDeleted(
   if (error) {
     console.error('Error cancelling meeting:', error);
     return;
+  }
+
+  // Log meeting deletion
+  if (existingMeeting) {
+    await auditLogger.log({
+      event_type: 'data_delete',
+      event_category: 'data',
+      workspace_id: existingMeeting.workspace_id,
+      resource_type: 'meeting',
+      resource_id: existingMeeting.id,
+      severity: 'info',
+      details: { source: 'teams_webhook', teams_meeting_id: teamsId, action: 'cancelled' },
+    });
   }
 
   console.log('Meeting cancelled successfully');

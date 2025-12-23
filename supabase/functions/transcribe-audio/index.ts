@@ -1,6 +1,10 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createAuditLogger } from "../_shared/audit-logger.ts";
+import { checkRequestSize, getContentLength, formatBytes } from "../_shared/request-size-limiter.ts";
+
+const FUNCTION_NAME = 'transcribe-audio';
 
 // Security headers including CORS and CSP
 const securityHeaders = {
@@ -26,7 +30,6 @@ function sanitizeString(input: string): string {
 
 // Remove potentially dangerous characters from text content
 function sanitizeTextContent(text: string): string {
-  // Remove null bytes and other control characters (except newlines/tabs)
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
@@ -82,16 +85,39 @@ const TranscribeRequestSchema = z.object({
 });
 
 serve(async (req) => {
+  const auditLogger = createAuditLogger(req);
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: securityHeaders });
   }
 
-  // Rate limiting check
   const clientIP = getClientIP(req);
+
+  // Request size limit check
+  const contentLength = getContentLength(req);
+  const sizeResult = checkRequestSize(contentLength, FUNCTION_NAME);
+  
+  if (!sizeResult.allowed) {
+    console.warn(`Request size exceeded for IP: ${clientIP}, size: ${formatBytes(sizeResult.size)}, limit: ${formatBytes(sizeResult.limit)}`);
+    await auditLogger.logRequestSizeExceeded(FUNCTION_NAME, sizeResult.size, sizeResult.limit);
+    return new Response(
+      JSON.stringify({ 
+        error: 'Request too large',
+        details: `Maximum request size is ${formatBytes(sizeResult.limit)}`,
+      }),
+      {
+        status: 413,
+        headers: { ...securityHeaders, 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  // Rate limiting check
   const rateLimitResult = checkRateLimit(clientIP);
   
   if (!rateLimitResult.allowed) {
     console.warn(`Rate limit exceeded for IP: ${clientIP}`);
+    await auditLogger.logRateLimit(FUNCTION_NAME);
     return new Response(
       JSON.stringify({ error: 'Too many requests. Please try again later.' }),
       {
@@ -112,6 +138,7 @@ serve(async (req) => {
     
     if (!validationResult.success) {
       console.error('Validation error:', validationResult.error.errors);
+      await auditLogger.logValidationFailed(FUNCTION_NAME, validationResult.error.errors);
       return new Response(
         JSON.stringify({ 
           error: 'Invalid request data',
@@ -130,13 +157,22 @@ serve(async (req) => {
     const { audioBase64, meetingId } = validationResult.data;
     console.log('Transcribing audio for meeting:', meetingId || 'no meeting ID');
 
+    // Log data access
+    await auditLogger.log({
+      event_type: 'data_access',
+      event_category: 'data',
+      resource_type: 'meeting',
+      resource_id: meetingId,
+      severity: 'info',
+      details: { action: 'transcribe_audio' },
+    });
+
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
     // For now, use AI to generate a mock transcription
-    // In production, you would use a proper speech-to-text service
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -161,6 +197,7 @@ serve(async (req) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error('AI Gateway error:', response.status, errorText);
+      await auditLogger.logApiError(FUNCTION_NAME, `AI Gateway error: ${response.status}`);
       throw new Error(`AI Gateway error: ${response.status}`);
     }
 
@@ -179,6 +216,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error in transcribe-audio function:', error);
     const errorMessage = error instanceof Error ? sanitizeString(error.message) : 'Unknown error';
+    await auditLogger.logApiError(FUNCTION_NAME, errorMessage);
     return new Response(
       JSON.stringify({ error: errorMessage }),
       {
