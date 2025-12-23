@@ -14,6 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
+      audit_logs: {
+        Row: {
+          created_at: string
+          details: Json | null
+          event_category: string
+          event_type: string
+          id: string
+          ip_address: string | null
+          resource_id: string | null
+          resource_type: string | null
+          severity: string
+          user_agent: string | null
+          user_id: string | null
+          workspace_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          event_category: string
+          event_type: string
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string | null
+          severity?: string
+          user_agent?: string | null
+          user_id?: string | null
+          workspace_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          event_category?: string
+          event_type?: string
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string | null
+          severity?: string
+          user_agent?: string | null
+          user_id?: string | null
+          workspace_id?: string | null
+        }
+        Relationships: []
+      }
       integrations: {
         Row: {
           config: Json
