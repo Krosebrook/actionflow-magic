@@ -317,6 +317,36 @@ export type Database = {
         }
         Relationships: []
       }
+      user_recovery: {
+        Row: {
+          created_at: string
+          id: string
+          recovery_email: string | null
+          security_answer_hash: string | null
+          security_question: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          recovery_email?: string | null
+          security_answer_hash?: string | null
+          security_question?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          recovery_email?: string | null
+          security_answer_hash?: string | null
+          security_question?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       workspace_members: {
         Row: {
           created_at: string
