@@ -5,15 +5,17 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, LogOut, Settings, Users, Calendar, CheckSquare } from "lucide-react";
+import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
+import { TwoFactorSetup } from "@/components/TwoFactorSetup";
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [show2FASetup, setShow2FASetup] = useState(false);
   const { workspaceId } = useWorkspace();
   
   // Enable session timeout - auto logout after 30 min of inactivity
@@ -64,6 +66,10 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">ActionFlow</h1>
             <div className="flex items-center gap-4">
+              <Button variant="outline" size="sm" onClick={() => setShow2FASetup(true)}>
+                <Shield className="w-4 h-4 mr-2" />
+                2FA
+              </Button>
               <Button variant="outline" size="sm" onClick={() => navigate("/integrations")}>
                 <Settings className="w-4 h-4 mr-2" />
                 Integrations
@@ -196,6 +202,15 @@ const Dashboard = () => {
           </TabsContent>
         </Tabs>
       </div>
+
+      {user && (
+        <TwoFactorSetup
+          userId={user.id}
+          userEmail={user.email || ""}
+          open={show2FASetup}
+          onOpenChange={setShow2FASetup}
+        />
+      )}
     </div>
   );
 };

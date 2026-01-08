@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TwoFactorVerify } from "@/components/TwoFactorVerify";
+import { check2FAEnabled } from "@/hooks/use2FA";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -15,6 +17,7 @@ const Auth = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [pending2FA, setPending2FA] = useState<{ userId: string } | null>(null);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,18 +57,27 @@ const Auth = () => {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) throw error;
 
-      toast({
-        title: "Welcome back!",
-        description: "Successfully signed in.",
-      });
-      navigate("/dashboard");
+      // Check if 2FA is enabled for this user
+      const has2FA = await check2FAEnabled(data.user.id);
+
+      if (has2FA) {
+        // Sign out temporarily and show 2FA verification
+        await supabase.auth.signOut();
+        setPending2FA({ userId: data.user.id });
+      } else {
+        toast({
+          title: "Welcome back!",
+          description: "Successfully signed in.",
+        });
+        navigate("/dashboard");
+      }
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -76,6 +88,48 @@ const Auth = () => {
       setLoading(false);
     }
   };
+
+  const handle2FAVerified = async () => {
+    // Re-sign in after 2FA verification
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to complete sign in",
+      });
+      setPending2FA(null);
+      return;
+    }
+
+    toast({
+      title: "Welcome back!",
+      description: "Successfully signed in with 2FA.",
+    });
+    navigate("/dashboard");
+  };
+
+  const handle2FACancel = () => {
+    setPending2FA(null);
+    setPassword("");
+  };
+
+  // Show 2FA verification screen if pending
+  if (pending2FA) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[image:var(--gradient-subtle)] px-4">
+        <TwoFactorVerify
+          userId={pending2FA.userId}
+          onVerified={handle2FAVerified}
+          onCancel={handle2FACancel}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[image:var(--gradient-subtle)] px-4">
