@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TwoFactorVerify } from "@/components/TwoFactorVerify";
 import { check2FAEnabled } from "@/hooks/use2FA";
+import { PasswordStrengthIndicator, validatePassword } from "@/components/PasswordStrengthIndicator";
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -18,9 +19,23 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [pending2FA, setPending2FA] = useState<{ userId: string } | null>(null);
+  const [passwordError, setPasswordError] = useState("");
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate password strength
+    const { isValid, errors } = validatePassword(password);
+    if (!isValid) {
+      setPasswordError(errors[0]);
+      toast({
+        variant: "destructive",
+        title: "Weak Password",
+        description: errors[0],
+      });
+      return;
+    }
+    setPasswordError("");
     setLoading(true);
 
     try {
@@ -206,10 +221,16 @@ const Auth = () => {
                     id="signup-password"
                     type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setPasswordError("");
+                    }}
                     required
-                    minLength={6}
                   />
+                  {passwordError && (
+                    <p className="text-xs text-destructive">{passwordError}</p>
+                  )}
+                  <PasswordStrengthIndicator password={password} />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Creating account..." : "Sign Up"}

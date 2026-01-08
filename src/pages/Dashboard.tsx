@@ -5,17 +5,21 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield } from "lucide-react";
+import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield, KeyRound, FileText } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 import { TwoFactorSetup } from "@/components/TwoFactorSetup";
+import { AccountRecoverySetup } from "@/components/AccountRecoverySetup";
+import { AuditLogViewer } from "@/components/AuditLogViewer";
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [show2FASetup, setShow2FASetup] = useState(false);
+  const [showRecoverySetup, setShowRecoverySetup] = useState(false);
   const { workspaceId } = useWorkspace();
   
   // Enable session timeout - auto logout after 30 min of inactivity
@@ -66,6 +70,10 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">ActionFlow</h1>
             <div className="flex items-center gap-4">
+              <Button variant="outline" size="sm" onClick={() => setShowRecoverySetup(true)}>
+                <KeyRound className="w-4 h-4 mr-2" />
+                Recovery
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setShow2FASetup(true)}>
                 <Shield className="w-4 h-4 mr-2" />
                 2FA
@@ -95,11 +103,15 @@ const Dashboard = () => {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-4">
+          <TabsList className="grid w-full max-w-lg grid-cols-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="meetings">Meetings</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="team">Team</TabsTrigger>
+            <TabsTrigger value="security">
+              <FileText className="w-4 h-4 mr-1" />
+              Logs
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -200,16 +212,27 @@ const Dashboard = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="security" className="space-y-6">
+            <AuditLogViewer workspaceId={workspaceId} />
+          </TabsContent>
         </Tabs>
       </div>
 
       {user && (
-        <TwoFactorSetup
-          userId={user.id}
-          userEmail={user.email || ""}
-          open={show2FASetup}
-          onOpenChange={setShow2FASetup}
-        />
+        <>
+          <TwoFactorSetup
+            userId={user.id}
+            userEmail={user.email || ""}
+            open={show2FASetup}
+            onOpenChange={setShow2FASetup}
+          />
+          <AccountRecoverySetup
+            userId={user.id}
+            open={showRecoverySetup}
+            onOpenChange={setShowRecoverySetup}
+          />
+        </>
       )}
     </div>
   );
