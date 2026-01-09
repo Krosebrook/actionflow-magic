@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import * as OTPAuth from "otpauth";
-
+import { notifySecurityEvent } from "@/lib/securityNotifications";
 interface User2FA {
   id: string;
   user_id: string;
@@ -88,6 +88,11 @@ export const use2FA = (userId: string | undefined) => {
 
     if (!error) {
       await fetchSettings();
+      // Send security notification
+      notifySecurityEvent({
+        userId,
+        eventType: "2fa_enabled",
+      });
     }
     return { error: error?.message };
   };
@@ -106,6 +111,11 @@ export const use2FA = (userId: string | undefined) => {
 
     if (!error) {
       await fetchSettings();
+      // Send security notification
+      notifySecurityEvent({
+        userId,
+        eventType: "2fa_disabled",
+      });
     }
     return { error: error?.message };
   };

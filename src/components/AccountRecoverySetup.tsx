@@ -20,6 +20,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { KeyRound, Mail, HelpCircle, CheckCircle } from "lucide-react";
 import { z } from "zod";
+import { notifySecurityEvent } from "@/lib/securityNotifications";
 
 interface AccountRecoverySetupProps {
   userId: string;
@@ -140,6 +141,12 @@ export const AccountRecoverySetup = ({
       }
 
       if (error) throw error;
+
+      // Send security notification
+      notifySecurityEvent({
+        userId,
+        eventType: "recovery_updated",
+      });
 
       toast({
         title: "Settings saved",
