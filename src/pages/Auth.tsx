@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TwoFactorVerify } from "@/components/TwoFactorVerify";
 import { check2FAEnabled } from "@/hooks/use2FA";
 import { PasswordStrengthIndicator, validatePassword } from "@/components/PasswordStrengthIndicator";
-
+import { useAuthRateLimit } from "@/hooks/useRateLimit";
+import { notifySecurityEvent } from "@/lib/securityNotifications";
+import { AlertCircle } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 const Auth = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -19,6 +22,25 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [pending2FA, setPending2FA] = useState<{ userId: string } | null>(null);
+  const { checkLimit, isLocked, timeUntilReset, remainingAttempts } = useAuthRateLimit();
+  const [lockoutCountdown, setLockoutCountdown] = useState(0);
+
+  // Update countdown timer during lockout
+  useEffect(() => {
+    if (isLocked && timeUntilReset > 0) {
+      setLockoutCountdown(timeUntilReset);
+      const interval = setInterval(() => {
+        setLockoutCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isLocked, timeUntilReset]);
   const [passwordError, setPasswordError] = useState("");
 
   const handleSignUp = async (e: React.FormEvent) => {
@@ -69,6 +91,17 @@ const Auth = () => {
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check rate limit before attempting sign in
+    if (!checkLimit()) {
+      toast({
+        variant: "destructive",
+        title: "Too many attempts",
+        description: `Please wait ${timeUntilReset} seconds before trying again.`,
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -87,6 +120,12 @@ const Auth = () => {
         await supabase.auth.signOut();
         setPending2FA({ userId: data.user.id });
       } else {
+        // Send login notification email
+        notifySecurityEvent({
+          userId: data.user.id,
+          eventType: "new_login",
+        });
+        
         toast({
           title: "Welcome back!",
           description: "Successfully signed in.",
@@ -119,6 +158,15 @@ const Auth = () => {
       });
       setPending2FA(null);
       return;
+    }
+
+    // Get user ID for notification
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user) {
+      notifySecurityEvent({
+        userId: sessionData.session.user.id,
+        eventType: "new_login",
+      });
     }
 
     toast({
@@ -156,6 +204,14 @@ const Auth = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {isLocked && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Too many login attempts. Please wait {lockoutCountdown} seconds before trying again.
+              </AlertDescription>
+            </Alert>
+          )}
           <Tabs defaultValue="signin" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
@@ -185,9 +241,14 @@ const Auth = () => {
                     required
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Signing in..." : "Sign In"}
+                <Button type="submit" className="w-full" disabled={loading || isLocked}>
+                  {loading ? "Signing in..." : isLocked ? `Wait ${lockoutCountdown}s` : "Sign In"}
                 </Button>
+                {remainingAttempts <= 2 && remainingAttempts > 0 && !isLocked && (
+                  <p className="text-xs text-amber-600 text-center">
+                    {remainingAttempts} attempt{remainingAttempts !== 1 ? "s" : ""} remaining
+                  </p>
+                )}
               </form>
             </TabsContent>
             
