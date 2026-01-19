@@ -12,6 +12,7 @@ import { check2FAEnabled } from "@/hooks/use2FA";
 import { PasswordStrengthIndicator, validatePassword } from "@/components/PasswordStrengthIndicator";
 import { useAuthRateLimit } from "@/hooks/useRateLimit";
 import { notifySecurityEvent } from "@/lib/securityNotifications";
+import { trackLoginSession } from "@/lib/sessionTracking";
 import { AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 const Auth = () => {
@@ -120,6 +121,9 @@ const Auth = () => {
         await supabase.auth.signOut();
         setPending2FA({ userId: data.user.id });
       } else {
+        // Track login session with location
+        trackLoginSession(data.user.id);
+        
         // Send login notification email
         notifySecurityEvent({
           userId: data.user.id,
@@ -160,9 +164,12 @@ const Auth = () => {
       return;
     }
 
-    // Get user ID for notification
+    // Get user ID for notification and session tracking
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData.session?.user) {
+      // Track login session with location
+      trackLoginSession(sessionData.session.user.id);
+      
       notifySecurityEvent({
         userId: sessionData.session.user.id,
         eventType: "new_login",
