@@ -5,7 +5,7 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield, KeyRound, FileText, Lock } from "lucide-react";
+import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield, KeyRound, FileText, Lock, Laptop } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
@@ -13,6 +13,7 @@ import { TwoFactorSetup } from "@/components/TwoFactorSetup";
 import { AccountRecoverySetup } from "@/components/AccountRecoverySetup";
 import { AuditLogViewer } from "@/components/AuditLogViewer";
 import { PasswordChangeDialog } from "@/components/PasswordChangeDialog";
+import { SessionManagement } from "@/components/SessionManagement";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ const Dashboard = () => {
   const [show2FASetup, setShow2FASetup] = useState(false);
   const [showRecoverySetup, setShowRecoverySetup] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
   const { workspaceId } = useWorkspace();
   
   // Enable session timeout - auto logout after 30 min of inactivity
@@ -72,6 +74,10 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">ActionFlow</h1>
             <div className="flex items-center gap-4">
+              <Button variant="outline" size="sm" onClick={() => setShowSessions(true)}>
+                <Laptop className="w-4 h-4 mr-2" />
+                Sessions
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setShowPasswordChange(true)}>
                 <Lock className="w-4 h-4 mr-2" />
                 Password
@@ -244,6 +250,20 @@ const Dashboard = () => {
             open={showPasswordChange}
             onOpenChange={setShowPasswordChange}
           />
+          {showSessions && (
+            <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-2xl">
+                <SessionManagement />
+                <Button 
+                  variant="outline" 
+                  className="mt-4 w-full"
+                  onClick={() => setShowSessions(false)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
