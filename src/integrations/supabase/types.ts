@@ -347,6 +347,72 @@ export type Database = {
         }
         Relationships: []
       }
+      user_sessions: {
+        Row: {
+          browser: string | null
+          city: string | null
+          country: string | null
+          country_code: string | null
+          created_at: string
+          device_type: string | null
+          expires_at: string | null
+          id: string
+          ip_address: string | null
+          is_current: boolean | null
+          is_revoked: boolean | null
+          last_active_at: string
+          latitude: number | null
+          longitude: number | null
+          os: string | null
+          region: string | null
+          session_token: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          browser?: string | null
+          city?: string | null
+          country?: string | null
+          country_code?: string | null
+          created_at?: string
+          device_type?: string | null
+          expires_at?: string | null
+          id?: string
+          ip_address?: string | null
+          is_current?: boolean | null
+          is_revoked?: boolean | null
+          last_active_at?: string
+          latitude?: number | null
+          longitude?: number | null
+          os?: string | null
+          region?: string | null
+          session_token: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          browser?: string | null
+          city?: string | null
+          country?: string | null
+          country_code?: string | null
+          created_at?: string
+          device_type?: string | null
+          expires_at?: string | null
+          id?: string
+          ip_address?: string | null
+          is_current?: boolean | null
+          is_revoked?: boolean | null
+          last_active_at?: string
+          latitude?: number | null
+          longitude?: number | null
+          os?: string | null
+          region?: string | null
+          session_token?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       workspace_members: {
         Row: {
           created_at: string
