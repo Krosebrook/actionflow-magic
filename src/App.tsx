@@ -8,6 +8,7 @@ import Pricing from "./pages/Pricing";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import IntegrationsSetup from "./pages/IntegrationsSetup";
+import LoginHistory from "./pages/LoginHistory";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
