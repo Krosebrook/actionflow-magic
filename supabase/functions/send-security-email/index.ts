@@ -30,17 +30,26 @@ const getEmailContent = (eventType: SecurityEventType, metadata?: Record<string,
 
   const templates: Record<SecurityEventType, { subject: string; html: string }> = {
     new_login: {
-      subject: "🔐 New Sign-In to Your ActionFlow Account",
+      subject: metadata?.alert_types?.includes('new_device') || metadata?.alert_types?.includes('new_location')
+        ? "⚠️ New Device or Location Detected on Your ActionFlow Account"
+        : "🔐 New Sign-In to Your ActionFlow Account",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h1 style="color: #1a1a1a;">New Sign-In Detected</h1>
-          <p>We noticed a new sign-in to your ActionFlow account.</p>
-          <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 20px 0;">
+          <h1 style="color: #1a1a1a;">${
+            metadata?.alert_types?.includes('new_device') || metadata?.alert_types?.includes('new_location')
+              ? '⚠️ Unusual Login Activity Detected'
+              : 'New Sign-In Detected'
+          }</h1>
+          ${metadata?.alert_types?.includes('new_device') ? '<p style="color: #dc2626; font-weight: bold;">A new device was used to sign in to your account.</p>' : ''}
+          ${metadata?.alert_types?.includes('new_location') ? '<p style="color: #dc2626; font-weight: bold;">Sign-in from an unusual location was detected.</p>' : ''}
+          <p>We noticed a ${metadata?.alert_types ? 'suspicious ' : ''}sign-in to your ActionFlow account.</p>
+          <div style="background: ${metadata?.alert_types ? '#fef2f2' : '#f5f5f5'}; padding: 16px; border-radius: 8px; margin: 20px 0; ${metadata?.alert_types ? 'border-left: 4px solid #dc2626;' : ''}">
             <p style="margin: 0;"><strong>Time:</strong> ${timestamp}</p>
             ${metadata?.location ? `<p style="margin: 8px 0 0;"><strong>Location:</strong> ${metadata.location}</p>` : ""}
             ${metadata?.device ? `<p style="margin: 8px 0 0;"><strong>Device:</strong> ${metadata.device}</p>` : ""}
+            ${metadata?.ip ? `<p style="margin: 8px 0 0;"><strong>IP Address:</strong> ${metadata.ip}</p>` : ""}
           </div>
-          <p>If this was you, no action is needed. If you didn't sign in, please secure your account immediately by changing your password and enabling 2FA.</p>
+          <p>If this was you, no action is needed. If you didn't sign in, please <strong>secure your account immediately</strong> by changing your password and enabling 2FA.</p>
           <p style="color: #666; font-size: 14px; margin-top: 30px;">— The ActionFlow Security Team</p>
         </div>
       `,
