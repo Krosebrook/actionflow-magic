@@ -5,7 +5,7 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield, KeyRound, FileText, Lock, Laptop } from "lucide-react";
+import { Plus, LogOut, Settings, Users, Calendar, CheckSquare, Shield, KeyRound, FileText, Lock, Laptop, History } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
@@ -74,6 +74,10 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">ActionFlow</h1>
             <div className="flex items-center gap-4">
+              <Button variant="outline" size="sm" onClick={() => navigate("/login-history")}>
+                <History className="w-4 h-4 mr-2" />
+                Login History
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setShowSessions(true)}>
                 <Laptop className="w-4 h-4 mr-2" />
                 Sessions
